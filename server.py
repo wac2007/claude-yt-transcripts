@@ -23,15 +23,29 @@ headers = {
     "Notion-Version": "2022-06-28"
 }
 
+def _local_transcript_path(video_id: str) -> str:
+    """Returns the expected local file path for a given video_id."""
+    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in video_id).strip()
+    return os.path.join(TRANSCRIPTS_FOLDER, f"{safe_title}.txt")
+
 @mcp.tool()
 def get_transcript(video_id: str) -> str:
     """
     Fetches the transcript of a YouTube video.
+    Checks for a locally saved transcript first before calling the YouTube API.
     Args:
         video_id: The ID of the YouTube video.
     Returns:
         The transcript of the YouTube video.
     """
+    local_path = _local_transcript_path(video_id)
+    if os.path.exists(local_path):
+        with open(local_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # Strip the "video_id\n\n" header written by save_transcript_to_file
+        prefix = f"{video_id}\n\n"
+        return content[len(prefix):] if content.startswith(prefix) else content
+
     fetched_transcript = ytt_api.fetch(video_id)
     transcript_text = ""
     for snippet in fetched_transcript:
@@ -39,6 +53,21 @@ def get_transcript(video_id: str) -> str:
     if not USE_NOTION:
         save_transcript_to_file(video_id, transcript_text)
     return transcript_text
+
+@mcp.tool()
+def delete_transcript(video_id: str) -> str:
+    """
+    Deletes the locally saved transcript file for a YouTube video.
+    Args:
+        video_id: The ID of the YouTube video whose transcript should be removed.
+    Returns:
+        A message indicating whether the file was deleted or did not exist.
+    """
+    local_path = _local_transcript_path(video_id)
+    if not os.path.exists(local_path):
+        return f"No local transcript found for video '{video_id}'."
+    os.remove(local_path)
+    return f"Transcript for '{video_id}' deleted from {local_path}."
 
 @mcp.tool()
 def create_notion_page(notion_page_content: Dict[str, Any]):    
