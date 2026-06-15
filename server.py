@@ -3,12 +3,14 @@ from youtube_transcript_api import YouTubeTranscriptApi
 import requests
 from typing import Dict, Any
 import os
-from dotenv import load_dotenv 
+from dotenv import load_dotenv
 
 load_dotenv()
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 PARENT_PAGE_ID = os.getenv("PARENT_PAGE_ID")
+USE_NOTION = os.getenv("USE_NOTION", "true").lower() == "true"
+TRANSCRIPTS_FOLDER = os.getenv("TRANSCRIPTS_FOLDER", "transcripts")
 
 mcp = FastMCP("Youtube Summarizer")
 
@@ -34,6 +36,8 @@ def get_transcript(video_id: str) -> str:
     transcript_text = ""
     for snippet in fetched_transcript:
         transcript_text += snippet.text + " "
+    if not USE_NOTION:
+        save_transcript_to_file(video_id, transcript_text)
     return transcript_text
 
 @mcp.tool()
@@ -92,7 +96,38 @@ def create_notion_page(notion_page_content: Dict[str, Any]):
         The response from the Notion API.
     """
     notion_page_content["parent"]["page_id"] = PARENT_PAGE_ID
-    response = requests.post(f"<https://api.notion.com/v1/pages>", headers=headers, json=notion_page_content)
+    response = requests.post("https://api.notion.com/v1/pages", headers=headers, json=notion_page_content)
+    return response.text
+
+def save_transcript_to_file(title: str, content: str) -> str:
+    """Saves transcript content to a .txt file in TRANSCRIPTS_FOLDER."""
+    os.makedirs(TRANSCRIPTS_FOLDER, exist_ok=True)
+    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title).strip()
+    file_path = os.path.join(TRANSCRIPTS_FOLDER, f"{safe_title}.txt")
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(f"{title}\n\n{content}")
+    return f"Transcript saved to {file_path}"
+
+@mcp.tool()
+def save_transcription(title: str, content: str, notion_page_content: Dict[str, Any] = None) -> str:
+    """
+    Saves a transcription either to a local file or to Notion, depending on the USE_NOTION env variable.
+    When USE_NOTION is false, saves a .txt file to the TRANSCRIPTS_FOLDER directory.
+    When USE_NOTION is true, creates a Notion page using notion_page_content.
+    Args:
+        title: The title of the transcription (used as filename when saving to file).
+        content: The plain-text transcript content.
+        notion_page_content: Required when USE_NOTION is true. A Notion page dict (same format as create_notion_page).
+    Returns:
+        A message describing where the transcription was saved.
+    """
+    if not USE_NOTION:
+        return save_transcript_to_file(title, content)
+
+    if not notion_page_content:
+        return "Error: notion_page_content is required when USE_NOTION is true."
+    notion_page_content["parent"]["page_id"] = PARENT_PAGE_ID
+    response = requests.post("https://api.notion.com/v1/pages", headers=headers, json=notion_page_content)
     return response.text
 
 if __name__ == "__main__":
